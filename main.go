@@ -34,7 +34,7 @@ func main() {
 
 	objs := wardObjects{}
 	if err := loadWardObjects(&objs, nil); err != nil {
-		log.Fatalf("[-] unable to load BPF objects: %v", err)
+		log.Fatalf("[-] unable to load BPF objects: %+v", err)
 	}
 	defer objs.Close()
 
