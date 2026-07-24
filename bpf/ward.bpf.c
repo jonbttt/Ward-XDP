@@ -7,6 +7,10 @@ char __license[] SEC("license") = "Dual BSD/GPL";
 #define ETH_P_IP 0x0800 // macro def for IPv4 Packet
 #define MAX_MAP_ENTRIES 131072
 
+/* TODO: Change to config-based */
+#define MAX_WINDOW_NS 5000000000
+#define MAX_PACKETS 500
+
 struct syn_stats {
     __u64 start_time;
     __u32 count;
@@ -25,7 +29,7 @@ int ward_main(struct xdp_md *ctx) {
     void *data = (void *)(long)ctx->data;
     struct ethhdr *eth = data;
 
-    if (eth + 1 > data_end) {
+    if ((void *)(eth + 1) > data_end) {
         return XDP_PASS;
     }
 
@@ -34,7 +38,7 @@ int ward_main(struct xdp_md *ctx) {
     }
 
     struct iphdr *iph = data + sizeof(struct ethhdr);
-    if (iph + 1 > data_end) {
+    if ((void *)(iph + 1) > data_end) {
         return XDP_PASS;
     }
 
@@ -49,8 +53,8 @@ int ward_main(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    struct tcphdr *tcph = (unsigned char*)iph + iph_len;
-    if (tcph + 1 > data_end) {
+    struct tcphdr *tcph = (struct tcphdr *)((unsigned char*)iph + iph_len);
+    if ((void *)(tcph + 1) > data_end) {
         return XDP_PASS;
     }
     
@@ -61,12 +65,25 @@ int ward_main(struct xdp_md *ctx) {
     u32 ip_src = iph->saddr;
     
     struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
+    u64 curr_time = bpf_ktime_get_ns();
+
 	if (!entry) {
-        struct syn_stats init_entry = {bpf_ktime_get_ns(), 1};
+        struct syn_stats init_entry = {curr_time, 1};
 		bpf_map_update_elem(&syn_map, &ip_src, &init_entry, BPF_ANY);
-	} else {
-		__sync_fetch_and_add(&entry->count, 1);
+        return XDP_PASS;
 	}
+
+    if (curr_time - entry->start_time > MAX_WINDOW_NS) {
+        entry->start_time = curr_time;
+        entry->count = 1;
+    } else {
+        __sync_fetch_and_add(&entry->count, 1);
+    }
+
+    if (entry->count > MAX_PACKETS) {
+        return XDP_DROP;
+        /* TODO: use enforce flag */
+    }
 
     return XDP_PASS;
 }
