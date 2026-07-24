@@ -13,7 +13,7 @@ communicate through pinned BPF maps.
 
 Status: [x] done · [~] in progress · [-] planned
 
-1. **SYN flood mitigation** [-] per-source rate limit on SYN-only segments via an
+1. **SYN flood mitigation** [~] per-source rate limit on SYN-only segments via an
    LRU map; drop above threshold in a rolling window.
 2. **Port scan detection** [-] flag sources touching many distinct ports; compact
    approximate-cardinality structure per source (not a full bitmap).
