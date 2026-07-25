@@ -7,28 +7,36 @@ char __license[] SEC("license") = "Dual BSD/GPL";
 #define ETH_P_IP 0x0800 // macro def for IPv4 Packet
 #define MAX_MAP_ENTRIES 131072
 
-/* TODO: Change to config-based */
-#define MAX_WINDOW_NS 5000000000
-#define MAX_PACKETS 500
+struct ward_cfg {
+    __u64 enforce;
+    __u64 syn_max_packets;
+    __u64 syn_window_ns;
+};
 
 struct syn_stats {
     __u64 start_time;
-    __u32 count;
+    __u64 count;
 };
+
+struct {
+    __uint(type, BPF_MAP_TYPE_ARRAY);
+    __type(key, __u32);
+    __type(value, struct ward_cfg);
+    __uint(max_entries, 1);
+} ward_config SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_MAP_ENTRIES);
     __type(key, __u32); // source IP addr
     __type(value, struct syn_stats); // starting time
-} syn_map SEC(".maps"); 
+} syn_map SEC(".maps");
 
 SEC("xdp")
 int ward_main(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
     void *data = (void *)(long)ctx->data;
     struct ethhdr *eth = data;
-
     if ((void *)(eth + 1) > data_end) {
         return XDP_PASS;
     }
@@ -45,11 +53,18 @@ int ward_main(struct xdp_md *ctx) {
     if (iph->protocol != IPPROTO_TCP) {
         return XDP_PASS;
     }
+
+    __u32 config_key = 0;
+    struct ward_cfg *config = bpf_map_lookup_elem(&ward_config, &config_key);
+    if (!config) {
+        return XDP_PASS;
+    }
     
     int iph_len = iph->ihl * 4;
-
     if (iph_len < 20 || iph_len > 60) {
-        /* TODO: Change to XDP_DROP once enforce flag is implemented */
+        if (config->enforce == 1) {
+            return XDP_DROP;
+        }
         return XDP_PASS;
     }
 
@@ -73,16 +88,18 @@ int ward_main(struct xdp_md *ctx) {
         return XDP_PASS;
 	}
 
-    if (curr_time - entry->start_time > MAX_WINDOW_NS) {
+    if (curr_time - entry->start_time > config->syn_window_ns) {
         entry->start_time = curr_time;
         entry->count = 1;
     } else {
         __sync_fetch_and_add(&entry->count, 1);
     }
 
-    if (entry->count > MAX_PACKETS) {
-        return XDP_DROP;
-        /* TODO: use enforce flag */
+    if (entry->count > config->syn_max_packets) {
+        if (config->enforce == 1) {
+            return XDP_DROP;
+        }
+        return XDP_PASS;
     }
 
     return XDP_PASS;

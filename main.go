@@ -21,6 +21,9 @@ import (
 
 func main() {
 	ifaceName := flag.String("iface", "", "network interface to attach to")
+	enforce := flag.Bool("enforce", false, "allows packet dropping when true")
+	synMaxPkts := flag.Int("syn_max_pkts", 500, "number of packets to trigger SYN flood alert")
+	synWindowNs := flag.Int("syn_window_ns", 5000000000, "timeframe for packets to trigger SYN flood alert (nanoseconds)")
 	flag.Parse()
 
 	if *ifaceName == "" {
@@ -37,6 +40,18 @@ func main() {
 		log.Fatalf("[-] unable to load BPF objects: %+v", err)
 	}
 	defer objs.Close()
+
+	cfg := wardWardCfg{
+		Enforce:       0,
+		SynMaxPackets: uint64(*synMaxPkts),
+		SynWindowNs:   uint64(*synWindowNs),
+	}
+	if *enforce {
+		cfg.Enforce = 1
+	}
+	if err := objs.WardConfig.Put(uint32(0), cfg); err != nil {
+		log.Fatalf("[-] unable to set config: %v", err)
+	}
 
 	l, err := link.AttachXDP(link.XDPOptions{
 		Program:   objs.WardMain,
