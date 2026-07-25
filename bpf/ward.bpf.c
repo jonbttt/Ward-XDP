@@ -32,6 +32,33 @@ struct {
     __type(value, struct syn_stats); // starting time
 } syn_map SEC(".maps");
 
+static __always_inline int check_syn_flood(__u32 ip_src, struct ward_cfg *cfg) {
+    struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
+    u64 curr_time = bpf_ktime_get_ns();
+
+	if (!entry) {
+        struct syn_stats init_entry = {curr_time, 1};
+		bpf_map_update_elem(&syn_map, &ip_src, &init_entry, BPF_ANY);
+        return XDP_PASS;
+	}
+
+    if (curr_time - entry->start_time > cfg->syn_window_ns) {
+        entry->start_time = curr_time;
+        entry->count = 1;
+    } else {
+        __sync_fetch_and_add(&entry->count, 1);
+    }
+
+    if (entry->count > cfg->syn_max_packets) {
+        if (cfg->enforce == 1) {
+            return XDP_DROP;
+        }
+        return XDP_PASS;
+    }
+
+    return XDP_PASS;
+}
+
 SEC("xdp")
 int ward_main(struct xdp_md *ctx) {
     void *data_end = (void *)(long)ctx->data_end;
@@ -65,7 +92,7 @@ int ward_main(struct xdp_md *ctx) {
         if (config->enforce == 1) {
             return XDP_DROP;
         }
-        return XDP_PASS;
+        return XDP_PASS; // don't parse packets with nonsense header lengths
     }
 
     struct tcphdr *tcph = (struct tcphdr *)((unsigned char*)iph + iph_len);
@@ -78,29 +105,8 @@ int ward_main(struct xdp_md *ctx) {
     }
 
     u32 ip_src = iph->saddr;
+    int act = check_syn_flood(ip_src, config);
+    if (act != XDP_PASS) return act;
     
-    struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
-    u64 curr_time = bpf_ktime_get_ns();
-
-	if (!entry) {
-        struct syn_stats init_entry = {curr_time, 1};
-		bpf_map_update_elem(&syn_map, &ip_src, &init_entry, BPF_ANY);
-        return XDP_PASS;
-	}
-
-    if (curr_time - entry->start_time > config->syn_window_ns) {
-        entry->start_time = curr_time;
-        entry->count = 1;
-    } else {
-        __sync_fetch_and_add(&entry->count, 1);
-    }
-
-    if (entry->count > config->syn_max_packets) {
-        if (config->enforce == 1) {
-            return XDP_DROP;
-        }
-        return XDP_PASS;
-    }
-
     return XDP_PASS;
 }
