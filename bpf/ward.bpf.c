@@ -7,6 +7,22 @@ char __license[] SEC("license") = "Dual BSD/GPL";
 #define ETH_P_IP 0x0800 // macro def for IPv4 Packet
 #define MAX_MAP_ENTRIES 131072
 
+enum ward_verdict {
+    WARD_OK = 0,
+    WARD_BLOCK,
+};
+
+enum ward_reason {
+    WARD_REASON_NONE = 0,
+    WARD_REASON_SYN_FLOOD,
+};
+
+struct ward_result {
+    enum ward_verdict verdict;
+    enum ward_reason reason;
+    __u64 value;
+};
+
 struct ward_cfg {
     __u64 enforce;
     __u64 syn_max_packets;
@@ -105,8 +121,10 @@ int ward_main(struct xdp_md *ctx) {
     }
 
     u32 ip_src = iph->saddr;
-    int act = check_syn_flood(ip_src, config);
-    if (act != XDP_PASS) return act;
+    enum ward_verdict verdict = check_syn_flood(ip_src, config);
+    if (verdict == WARD_BLOCK) {
+        return config->enforce ? XDP_DROP : XDP_PASS;
+    }
     
     return XDP_PASS;
 }
