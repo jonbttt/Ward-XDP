@@ -53,6 +53,13 @@ struct {
 } ward_config SEC(".maps");
 
 struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __type(key, __u32);
+    __type(value, __u8);
+    __uint(max_entries, 1024);
+} ward_allowlist SEC(".maps");
+
+struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_MAP_ENTRIES);
     __type(key, __u32);
@@ -113,6 +120,11 @@ int ward_main(struct xdp_md *ctx) {
 
     struct iphdr *iph = data + sizeof(struct ethhdr);
     if ((void *)(iph + 1) > data_end) {
+        return XDP_PASS;
+    }
+
+    __u32 src = iph->saddr;
+    if (bpf_map_lookup_elem(&ward_allowlist, &src)) {
         return XDP_PASS;
     }
 
