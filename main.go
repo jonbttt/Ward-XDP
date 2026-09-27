@@ -6,6 +6,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -15,9 +18,19 @@ import (
 	"syscall"
 
 	"github.com/cilium/ebpf/link"
+	"github.com/cilium/ebpf/ringbuf"
 )
 
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -target bpfel ward ./bpf/ward.bpf.c -- -I./bpf
+
+type wardEvent struct {
+	Timestamp uint64
+	IPSrc     [4]byte
+	Verdict   int32
+	Action    int32
+	Reason    int32
+	Value     uint64
+}
 
 func main() {
 	ifaceName := flag.String("iface", "", "network interface to attach to")
@@ -71,6 +84,34 @@ func main() {
 		}
 	}
 	defer l.Close()
+
+	reader, err := ringbuf.NewReader(objs.Events)
+	if err != nil {
+		log.Fatalf("[-] unable to open ring buffer: %v", err)
+	}
+	defer reader.Close()
+
+	go func() {
+		for {
+			record, err := reader.Read()
+			if err != nil {
+				if errors.Is(err, ringbuf.ErrClosed) {
+					return
+				}
+
+				log.Printf("[-] error reading ring buffer: %v", err)
+				continue
+			}
+
+			var event wardEvent
+			if err := binary.Read(bytes.NewReader(record.RawSample), binary.LittleEndian, &event); err != nil {
+				log.Printf("[-] error decoding wardEvent: %v", err)
+				continue
+			}
+
+			log.Printf("[!] src=%s reason=%d value=%d action=%d", net.IP(event.IPSrc[:]), event.Reason, event.Value, event.Action)
+		}
+	}()
 
 	log.Printf("[+] successfully attached to interface %s, press Ctrl-C to detach", *ifaceName)
 
