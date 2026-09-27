@@ -13,20 +13,13 @@ communicate through pinned BPF maps.
 
 Status: [x] done · [~] in progress · [-] planned
 
-1. **SYN flood mitigation** [~] per-source rate limit on SYN-only segments via an
-   LRU map; drop above threshold in a rolling window.
-2. **Port scan detection** [-] flag sources touching many distinct ports; compact
-   approximate-cardinality structure per source (not a full bitmap).
-3. **ARP spoofing prevention** [-] trusted IPv4→MAC table; drop replies where the
-   sender IP maps to a different MAC. Uses bpf_dynptr for variable-length parsing.
-4. **IP spoofing / ingress filtering** [-] LPM-trie martian/bogon deny + uRPF-style
-   allow (RFC 2827 / BCP 38).
-5. **DNS amplification mitigation** [-] per-destination rate limit on unsolicited
-   port-53 responses to protected hosts.
-6. **ML anomaly detection** [-] Go control plane: rule engine → userspace
-   per-source z-score baseline → inline Isolation Forest; hourly retrain.
-7. **BPF LSM socket policy** [-] per-process bind()/connect() policy enforced at
-   security hooks, returning -EPERM on violation.
+1. **SYN flood mitigation** [x] per-source rate limit on SYN-only segments via an LRU map; drop above threshold in a rolling window, one alert per window over the ring buffer.
+2. **Port scan detection** [-] flag sources touching many distinct ports; compact approximate-cardinality structure per source (not a full bitmap).
+3. **ARP spoofing prevention** [-] trusted IPv4→MAC table; drop replies where the sender IP maps to a different MAC. Uses bpf_dynptr for variable-length parsing.
+4. **IP spoofing / ingress filtering** [-] LPM-trie martian/bogon deny + uRPF-style allow (RFC 2827 / BCP 38).
+5. **DNS amplification mitigation** [-] per-destination rate limit on unsolicited port-53 responses to protected hosts.
+6. **ML anomaly detection** [-] Go control plane: rule engine → userspace per-source z-score baseline → inline Isolation Forest; hourly retrain.
+7. **BPF LSM socket policy** [-] per-process bind()/connect() policy enforced at security hooks, returning -EPERM on violation.
 
 ## Safety defaults
 - **Alert-only by default:** every drop/deny is gated by an `enforce` flag;

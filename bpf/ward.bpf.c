@@ -9,7 +9,8 @@ char __license[] SEC("license") = "Dual BSD/GPL";
 
 enum ward_verdict {
     WARD_OK = 0,
-    WARD_BLOCK,
+    WARD_BLOCK = 1,
+    WARD_BLOCK_ALERTED = 2,
 };
 
 enum ward_reason {
@@ -23,6 +24,15 @@ struct ward_result {
     __u64 value;
 };
 
+struct ward_event {
+    __u64 timestamp;
+    __u32 ip_src;
+    enum ward_verdict verdict;
+    enum xdp_action action;
+    enum ward_reason reason;
+    __u64 value;
+};
+
 struct ward_cfg {
     __u64 enforce;
     __u64 syn_max_packets;
@@ -32,6 +42,7 @@ struct ward_cfg {
 struct syn_stats {
     __u64 start_time;
     __u64 count;
+    bool alerted;
 };
 
 struct {
@@ -44,35 +55,47 @@ struct {
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __uint(max_entries, MAX_MAP_ENTRIES);
-    __type(key, __u32); // source IP addr
-    __type(value, struct syn_stats); // starting time
+    __type(key, __u32);
+    __type(value, struct syn_stats);
 } syn_map SEC(".maps");
 
-static __always_inline int check_syn_flood(__u32 ip_src, struct ward_cfg *cfg) {
+struct {
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, 1 << 20);
+} events SEC(".maps");
+
+static __always_inline struct ward_result check_syn_flood(__u32 ip_src, struct ward_cfg *cfg) {
     struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
     u64 curr_time = bpf_ktime_get_ns();
 
 	if (!entry) {
-        struct syn_stats init_entry = {curr_time, 1};
+        struct syn_stats init_entry = {curr_time, 1, false};
 		bpf_map_update_elem(&syn_map, &ip_src, &init_entry, BPF_ANY);
-        return XDP_PASS;
+        struct ward_result res = {WARD_OK, WARD_REASON_NONE, 0};
+        return res;
 	}
 
     if (curr_time - entry->start_time > cfg->syn_window_ns) {
         entry->start_time = curr_time;
         entry->count = 1;
+        entry->alerted = false;
     } else {
         __sync_fetch_and_add(&entry->count, 1);
     }
 
-    if (entry->count > cfg->syn_max_packets) {
-        if (cfg->enforce == 1) {
-            return XDP_DROP;
-        }
-        return XDP_PASS;
+    if (entry->alerted) {
+        struct ward_result res = {WARD_BLOCK_ALERTED, WARD_REASON_SYN_FLOOD, 0};
+        return res;
     }
 
-    return XDP_PASS;
+    if (entry->count > cfg->syn_max_packets) {
+        struct ward_result res = {WARD_BLOCK, WARD_REASON_SYN_FLOOD, entry->count};
+        entry->alerted = true;
+        return res;
+    }
+
+    struct ward_result res = {WARD_OK, WARD_REASON_NONE, 0};
+    return res;
 }
 
 SEC("xdp")
@@ -102,13 +125,12 @@ int ward_main(struct xdp_md *ctx) {
     if (!config) {
         return XDP_PASS;
     }
+
+    enum xdp_action action = config->enforce ? XDP_DROP : XDP_PASS;
     
     int iph_len = iph->ihl * 4;
     if (iph_len < 20 || iph_len > 60) {
-        if (config->enforce == 1) {
-            return XDP_DROP;
-        }
-        return XDP_PASS; // don't parse packets with nonsense header lengths
+        return action; // best not to parse invalid header len
     }
 
     struct tcphdr *tcph = (struct tcphdr *)((unsigned char*)iph + iph_len);
@@ -121,9 +143,27 @@ int ward_main(struct xdp_md *ctx) {
     }
 
     u32 ip_src = iph->saddr;
-    enum ward_verdict verdict = check_syn_flood(ip_src, config);
-    if (verdict == WARD_BLOCK) {
-        return config->enforce ? XDP_DROP : XDP_PASS;
+    struct ward_result res = check_syn_flood(ip_src, config);
+
+    if (res.verdict == WARD_BLOCK) {
+        struct ward_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+        if (!event) {
+            return action;
+        }
+
+        event->timestamp = bpf_ktime_get_ns();
+        event->ip_src = ip_src;
+        event->verdict = res.verdict;
+        event->action = action;
+        event->reason = res.reason;
+        event->value = res.value;
+        bpf_ringbuf_submit(event, 0);
+
+        return action;
+    }
+
+    if (res.verdict == WARD_BLOCK_ALERTED) {
+        return action;
     }
     
     return XDP_PASS;
