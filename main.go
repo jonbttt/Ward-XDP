@@ -15,6 +15,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/cilium/ebpf/link"
@@ -37,6 +38,7 @@ func main() {
 	enforce := flag.Bool("enforce", false, "allows packet dropping when true")
 	synMaxPkts := flag.Int("syn_max_pkts", 500, "number of packets to trigger SYN flood alert")
 	synWindowNs := flag.Int("syn_window_ns", 5000000000, "timeframe for packets to trigger SYN flood alert (nanoseconds)")
+	allowList := flag.String("allow", "", "comma-delimited IPs that are never blocked")
 	flag.Parse()
 
 	if *ifaceName == "" {
@@ -64,6 +66,19 @@ func main() {
 	}
 	if err := objs.WardConfig.Put(uint32(0), cfg); err != nil {
 		log.Fatalf("[-] unable to set config: %v", err)
+	}
+
+	if *allowList != "" {
+		for _, s := range strings.Split(*allowList, ",") {
+			ip := net.ParseIP(strings.TrimSpace(s)).To4()
+			if ip == nil {
+				log.Fatalf("[-] invalid IPv4 in -allow: %q", s)
+			}
+			if err := objs.WardAllowlist.Put([4]byte(ip), uint8(1)); err != nil {
+				log.Fatalf("[-] unable to add %s to allowlist: %v", ip, err)
+			}
+			log.Printf("[+] added %s to allowlist", ip)
+		}
 	}
 
 	l, err := link.AttachXDP(link.XDPOptions{
