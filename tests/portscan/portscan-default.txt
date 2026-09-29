@@ -1,0 +1,55 @@
+# args: 
+# date: 2026-09-29T22:50:36+10:00
+
+## nmap -sS -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 22:50 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.0000010s latency).
+Not shown: 99 closed tcp ports (reset)
+PORT   STATE SERVICE
+22/tcp open  ssh
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 13.07 seconds
+
+## nmap -sN -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 22:50 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.0000010s latency).
+Not shown: 99 closed tcp ports (reset)
+PORT   STATE         SERVICE
+22/tcp open|filtered ssh
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 14.27 seconds
+
+## nmap -sF -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 22:51 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.0000010s latency).
+Not shown: 99 closed tcp ports (reset)
+PORT   STATE         SERVICE
+22/tcp open|filtered ssh
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 14.27 seconds
+
+## nmap -sX -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 22:51 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.0000020s latency).
+Not shown: 99 closed tcp ports (reset)
+PORT   STATE         SERVICE
+22/tcp open|filtered ssh
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 14.28 seconds
+
+## ward-xdp events
+2026/09/29 22:50:34 [+] successfully attached to interface veth-ward, press Ctrl-C to detach
+2026/09/29 22:50:49 [!] src=10.200.0.2 reason=2 value=21 action=2
+2026/09/29 22:51:08 [!] src=10.200.0.2 reason=2 value=21 action=2
+2026/09/29 22:51:29 [!] src=10.200.0.2 reason=2 value=21 action=2
+2026/09/29 22:51:49 [!] src=10.200.0.2 reason=2 value=21 action=2
+
+2026/09/29 22:51:56 [+] detaching...

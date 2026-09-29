@@ -1,0 +1,81 @@
+# args: -enforce
+# date: 2026-09-29T23:10:03+10:00
+
+## nmap -sS -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 23:10 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.000056s latency).
+Not shown: 99 closed tcp ports (reset)
+PORT   STATE SERVICE
+22/tcp open  ssh
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 43.58 seconds
+
+## nmap -sN -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 23:10 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.000056s latency).
+Not shown: 93 closed tcp ports (reset)
+PORT   STATE         SERVICE
+4/tcp  open|filtered unknown
+22/tcp open|filtered ssh
+41/tcp open|filtered graphics
+44/tcp open|filtered mpm-flags
+66/tcp open|filtered sqlnet
+76/tcp open|filtered deos
+87/tcp open|filtered priv-term-l
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 34.19 seconds
+
+## nmap -sF -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 23:11 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.000050s latency).
+Not shown: 89 closed tcp ports (reset)
+PORT   STATE         SERVICE
+1/tcp  open|filtered tcpmux
+22/tcp open|filtered ssh
+28/tcp open|filtered unknown
+32/tcp open|filtered unknown
+55/tcp open|filtered isi-gl
+60/tcp open|filtered unknown
+66/tcp open|filtered sqlnet
+68/tcp open|filtered dhcpc
+72/tcp open|filtered netrjs-2
+84/tcp open|filtered ctf
+88/tcp open|filtered kerberos-sec
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 35.10 seconds
+
+## nmap -sX -p 1-100
+Starting Nmap 7.94SVN ( https://nmap.org ) at 2026-09-29 23:12 AEST
+Nmap scan report for 10.200.0.1
+Host is up (0.000050s latency).
+Not shown: 99 closed tcp ports (reset)
+PORT   STATE         SERVICE
+22/tcp open|filtered ssh
+MAC Address: AA:08:3D:68:92:FC (Unknown)
+
+Nmap done: 1 IP address (1 host up) scanned in 42.98 seconds
+
+## ward-xdp events
+2026/09/29 23:10:01 [+] successfully attached to interface veth-ward, press Ctrl-C to detach
+2026/09/29 23:10:16 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:10:22 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:10:28 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:06 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:12 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:17 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:24 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:46 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:52 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:11:57 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:12:03 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:12:27 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:12:33 [!] src=10.200.0.2 reason=2 value=21 action=1
+2026/09/29 23:12:38 [!] src=10.200.0.2 reason=2 value=21 action=1
+
+2026/09/29 23:13:03 [+] detaching...
