@@ -71,15 +71,19 @@ struct {
 	__uint(max_entries, 1 << 20);
 } events SEC(".maps");
 
-static __always_inline struct ward_result check_syn_flood(__u32 ip_src, struct ward_cfg *cfg) {
+static __always_inline struct ward_result check_syn_flood(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg) {
+    struct ward_result pass = {WARD_OK, WARD_REASON_NONE, 0};
+    if (tcph->syn == 0 || tcph->ack == 1) {
+        return pass;
+    }
+
     struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
     u64 curr_time = bpf_ktime_get_ns();
 
 	if (!entry) {
         struct syn_stats init_entry = {curr_time, 1, false};
 		bpf_map_update_elem(&syn_map, &ip_src, &init_entry, BPF_ANY);
-        struct ward_result res = {WARD_OK, WARD_REASON_NONE, 0};
-        return res;
+        return pass;
 	}
 
     if (curr_time - entry->start_time > cfg->syn_window_ns) {
@@ -101,8 +105,7 @@ static __always_inline struct ward_result check_syn_flood(__u32 ip_src, struct w
         return res;
     }
 
-    struct ward_result res = {WARD_OK, WARD_REASON_NONE, 0};
-    return res;
+    return pass;
 }
 
 SEC("xdp")
@@ -123,8 +126,8 @@ int ward_main(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    __u32 src = iph->saddr;
-    if (bpf_map_lookup_elem(&ward_allowlist, &src)) {
+    __u32 ip_src = iph->saddr;
+    if (bpf_map_lookup_elem(&ward_allowlist, &ip_src)) {
         return XDP_PASS;
     }
 
@@ -149,13 +152,8 @@ int ward_main(struct xdp_md *ctx) {
     if ((void *)(tcph + 1) > data_end) {
         return XDP_PASS;
     }
-    
-    if (tcph->syn == 0 || tcph->ack == 1) {
-        return XDP_PASS;
-    }
 
-    u32 ip_src = iph->saddr;
-    struct ward_result res = check_syn_flood(ip_src, config);
+    struct ward_result res = check_syn_flood(tcph, ip_src, config);
 
     if (res.verdict == WARD_BLOCK) {
         struct ward_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
