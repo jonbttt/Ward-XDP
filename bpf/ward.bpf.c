@@ -15,7 +15,8 @@ enum ward_verdict {
 
 enum ward_reason {
     WARD_REASON_NONE = 0,
-    WARD_REASON_SYN_FLOOD,
+    WARD_REASON_SYN_FLOOD = 1,
+    WARD_REASON_PORT_SCAN = 2,
 };
 
 struct ward_result {
@@ -37,11 +38,20 @@ struct ward_cfg {
     __u64 enforce;
     __u64 syn_max_packets;
     __u64 syn_window_ns;
+    __u64 port_scan_max_ports;
+    __u64 port_scan_window_ns;
 };
 
 struct syn_stats {
     __u64 start_time;
     __u64 count;
+    bool alerted;
+};
+
+struct port_scan_stats {
+    __u64 start_time;
+    __u64 ports_seen;   // 64-bit bitmap
+    __u64 distinct;     // num bits set
     bool alerted;
 };
 
@@ -67,19 +77,30 @@ struct {
 } syn_map SEC(".maps");
 
 struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, MAX_MAP_ENTRIES);
+    __type(key, __u32);
+    __type(value, struct port_scan_stats);
+} port_scan_map SEC(".maps");
+
+struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
 	__uint(max_entries, 1 << 20);
 } events SEC(".maps");
 
-static __always_inline struct ward_result check_syn_flood(__u32 ip_src, struct ward_cfg *cfg) {
+static __always_inline struct ward_result check_syn_flood(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg) {
+    struct ward_result pass = {WARD_OK, WARD_REASON_NONE, 0};
+    if (tcph->syn == 0 || tcph->ack == 1) {
+        return pass;
+    }
+
     struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
     u64 curr_time = bpf_ktime_get_ns();
 
 	if (!entry) {
         struct syn_stats init_entry = {curr_time, 1, false};
 		bpf_map_update_elem(&syn_map, &ip_src, &init_entry, BPF_ANY);
-        struct ward_result res = {WARD_OK, WARD_REASON_NONE, 0};
-        return res;
+        return pass;
 	}
 
     if (curr_time - entry->start_time > cfg->syn_window_ns) {
@@ -101,8 +122,72 @@ static __always_inline struct ward_result check_syn_flood(__u32 ip_src, struct w
         return res;
     }
 
-    struct ward_result res = {WARD_OK, WARD_REASON_NONE, 0};
-    return res;
+    return pass;
+}
+
+static __always_inline struct ward_result check_port_scan(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg) {
+    struct ward_result pass = {WARD_OK, WARD_REASON_NONE, 0};
+    if (tcph->ack) {
+        return pass;
+    }
+
+    __u64 bit = 1ULL << (bpf_ntohs(tcph->dest) % 64);
+    struct port_scan_stats *entry = bpf_map_lookup_elem(&port_scan_map, &ip_src);
+    __u64 curr_time = bpf_ktime_get_ns();
+
+	if (!entry) {
+        struct port_scan_stats init_entry = {curr_time, bit, 1, false};
+		bpf_map_update_elem(&port_scan_map, &ip_src, &init_entry, BPF_ANY);
+        return pass;
+	}
+
+    if (curr_time - entry->start_time > cfg->port_scan_window_ns) {
+        entry->start_time = curr_time;
+        entry->ports_seen = bit;
+        entry->distinct = 1;
+        entry->alerted = false;
+    } else {
+        __u64 old = __sync_fetch_and_or(&entry->ports_seen, bit);
+        if (!(old & bit)) {
+            __sync_fetch_and_add(&entry->distinct, 1);
+        }
+    }
+
+    if (entry->alerted) {
+        struct ward_result res = {WARD_BLOCK_ALERTED, WARD_REASON_PORT_SCAN, entry->distinct};
+        return res;
+    }
+
+    if (entry->distinct > cfg->port_scan_max_ports) {
+        struct ward_result res = {WARD_BLOCK, WARD_REASON_PORT_SCAN, entry->distinct};
+        entry->alerted = true;
+        return res;
+    }
+
+    return pass;
+}
+
+static __always_inline void emit_event(__u32 ip_src, struct ward_result *res, enum xdp_action action) {
+    if (res->verdict == WARD_BLOCK) {
+        struct ward_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
+        if (!event) {
+            return;
+        }
+
+        event->timestamp = bpf_ktime_get_ns();
+        event->ip_src = ip_src;
+        event->verdict = res->verdict;
+        event->action = action;
+        event->reason = res->reason;
+        event->value = res->value;
+        bpf_ringbuf_submit(event, 0);
+
+        return;
+    }
+
+    if (res->verdict == WARD_BLOCK_ALERTED) {
+        return;
+    }
 }
 
 SEC("xdp")
@@ -123,8 +208,8 @@ int ward_main(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    __u32 src = iph->saddr;
-    if (bpf_map_lookup_elem(&ward_allowlist, &src)) {
+    __u32 ip_src = iph->saddr;
+    if (bpf_map_lookup_elem(&ward_allowlist, &ip_src)) {
         return XDP_PASS;
     }
 
@@ -149,32 +234,13 @@ int ward_main(struct xdp_md *ctx) {
     if ((void *)(tcph + 1) > data_end) {
         return XDP_PASS;
     }
-    
-    if (tcph->syn == 0 || tcph->ack == 1) {
-        return XDP_PASS;
-    }
 
-    u32 ip_src = iph->saddr;
-    struct ward_result res = check_syn_flood(ip_src, config);
+    struct ward_result syn_res = check_syn_flood(tcph, ip_src, config);
+    struct ward_result port_scan_res = check_port_scan(tcph, ip_src, config);
+    if (syn_res.verdict == WARD_BLOCK)  emit_event(ip_src, &syn_res, action);
+    if (port_scan_res.verdict == WARD_BLOCK) emit_event(ip_src, &port_scan_res, action);
 
-    if (res.verdict == WARD_BLOCK) {
-        struct ward_event *event = bpf_ringbuf_reserve(&events, sizeof(*event), 0);
-        if (!event) {
-            return action;
-        }
-
-        event->timestamp = bpf_ktime_get_ns();
-        event->ip_src = ip_src;
-        event->verdict = res.verdict;
-        event->action = action;
-        event->reason = res.reason;
-        event->value = res.value;
-        bpf_ringbuf_submit(event, 0);
-
-        return action;
-    }
-
-    if (res.verdict == WARD_BLOCK_ALERTED) {
+    if (syn_res.verdict != WARD_OK || port_scan_res.verdict != WARD_OK) {
         return action;
     }
     

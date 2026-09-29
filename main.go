@@ -38,6 +38,8 @@ func main() {
 	enforce := flag.Bool("enforce", false, "allows packet dropping when true")
 	synMaxPkts := flag.Int("syn_max_pkts", 500, "number of packets to trigger SYN flood alert")
 	synWindowNs := flag.Int("syn_window_ns", 5000000000, "timeframe for packets to trigger SYN flood alert (nanoseconds)")
+	scanMaxPorts := flag.Int("scan_max_ports", 20, "number of distinct ports to trigger port scan alert (<64 due to bitmap)")
+	scanWindowNs := flag.Int("scan_window_ns", 5000000000, "timeframe for ports accessed to trigger port scan alert (nanoseconds)")
 	allowList := flag.String("allow", "", "comma-delimited IPs that are never blocked")
 	flag.Parse()
 
@@ -50,6 +52,10 @@ func main() {
 		log.Fatalf("[-] error looking up interface %q: %v", *ifaceName, err)
 	}
 
+	if *scanMaxPorts <= 0 || *scanMaxPorts >= 64 {
+		log.Fatalf("[-] scan_max_ports must be <= 64")
+	}
+
 	objs := wardObjects{}
 	if err := loadWardObjects(&objs, nil); err != nil {
 		log.Fatalf("[-] unable to load BPF objects: %+v", err)
@@ -57,9 +63,11 @@ func main() {
 	defer objs.Close()
 
 	cfg := wardWardCfg{
-		Enforce:       0,
-		SynMaxPackets: uint64(*synMaxPkts),
-		SynWindowNs:   uint64(*synWindowNs),
+		Enforce:          0,
+		SynMaxPackets:    uint64(*synMaxPkts),
+		SynWindowNs:      uint64(*synWindowNs),
+		PortScanMaxPorts: uint64(*scanMaxPorts),
+		PortScanWindowNs: uint64(*scanWindowNs),
 	}
 	if *enforce {
 		cfg.Enforce = 1
