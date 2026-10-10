@@ -2,8 +2,7 @@
 Kernel-resident network defense system: eBPF/XDP data plane (six ingress detectors) + BPF LSM socket policy, with a Go control plane (rule engine, userspace self-baseline, inline Isolation Forest) that ships structured alerts (ECS ndjson) to a SIEM.
 
 ## Status
-Early development. Environment up (kernel 6.8, BPF LSM enabled, CO-RE toolchain).
-Working on XDP loader + first detector.
+2/7 features finished: SYN flood mitigation and port scan detection done, ARP spoofing prevention next.
 
 ## Scope
 
