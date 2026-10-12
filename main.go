@@ -38,8 +38,10 @@ func main() {
 	enforce := flag.Bool("enforce", false, "allows packet dropping when true")
 	synMaxPkts := flag.Int("syn_max_pkts", 500, "number of packets to trigger SYN flood alert")
 	synWindowNs := flag.Int("syn_window_ns", 5000000000, "timeframe for packets to trigger SYN flood alert (nanoseconds)")
+	synBlockTTL := flag.Int("syn_block_ttl_ns", 60000000000, "how long to block a SYN flood source (nanoseconds)")
 	scanMaxPorts := flag.Int("scan_max_ports", 20, "number of distinct ports to trigger port scan alert (<64 due to bitmap)")
 	scanWindowNs := flag.Int("scan_window_ns", 5000000000, "timeframe for ports accessed to trigger port scan alert (nanoseconds)")
+	scanBlockTTL := flag.Int("scan_block_ttl_ns", 600000000000, "how long to block a port scan source (nanoseconds)")
 	allowList := flag.String("allow", "", "comma-delimited IPs that are never blocked")
 	flag.Parse()
 
@@ -63,11 +65,13 @@ func main() {
 	defer objs.Close()
 
 	cfg := wardWardCfg{
-		Enforce:          0,
-		SynMaxPackets:    uint64(*synMaxPkts),
-		SynWindowNs:      uint64(*synWindowNs),
-		PortScanMaxPorts: uint64(*scanMaxPorts),
-		PortScanWindowNs: uint64(*scanWindowNs),
+		Enforce:            0,
+		SynMaxPackets:      uint64(*synMaxPkts),
+		SynWindowNs:        uint64(*synWindowNs),
+		SynBlockTtlNs:      uint64(*synBlockTTL),
+		PortScanMaxPorts:   uint64(*scanMaxPorts),
+		PortScanWindowNs:   uint64(*scanWindowNs),
+		PortScanBlockTtlNs: uint64(*scanBlockTTL),
 	}
 	if *enforce {
 		cfg.Enforce = 1

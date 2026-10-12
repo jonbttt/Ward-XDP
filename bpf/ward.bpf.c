@@ -38,8 +38,15 @@ struct ward_cfg {
     __u64 enforce;
     __u64 syn_max_packets;
     __u64 syn_window_ns;
+    __u64 syn_block_ttl_ns;
     __u64 port_scan_max_ports;
     __u64 port_scan_window_ns;
+    __u64 port_scan_block_ttl_ns;
+};
+
+struct block_stats {
+    __u64 until_time;
+    enum ward_reason reason;
 };
 
 struct syn_stats {
@@ -57,17 +64,24 @@ struct port_scan_stats {
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
+    __uint(max_entries, 1);
     __type(key, __u32);
     __type(value, struct ward_cfg);
-    __uint(max_entries, 1);
 } ward_config SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
     __type(key, __u32);
     __type(value, __u8);
-    __uint(max_entries, 1024);
 } ward_allowlist SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __uint(max_entries, MAX_MAP_ENTRIES);
+    __type(key, __u32);
+    __type(value, struct block_stats);
+} ward_blocklist SEC(".maps");
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
@@ -88,14 +102,13 @@ struct {
 	__uint(max_entries, 1 << 20);
 } events SEC(".maps");
 
-static __always_inline struct ward_result check_syn_flood(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg) {
+static __always_inline struct ward_result check_syn_flood(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg, __u64 curr_time) {
     struct ward_result pass = {WARD_OK, WARD_REASON_NONE, 0};
     if (tcph->syn == 0 || tcph->ack == 1) {
         return pass;
     }
 
     struct syn_stats *entry = bpf_map_lookup_elem(&syn_map, &ip_src);
-    u64 curr_time = bpf_ktime_get_ns();
 
 	if (!entry) {
         struct syn_stats init_entry = {curr_time, 1, false};
@@ -125,7 +138,7 @@ static __always_inline struct ward_result check_syn_flood(struct tcphdr *tcph, _
     return pass;
 }
 
-static __always_inline struct ward_result check_port_scan(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg) {
+static __always_inline struct ward_result check_port_scan(struct tcphdr *tcph, __u32 ip_src, struct ward_cfg *cfg, __u64 curr_time) {
     struct ward_result pass = {WARD_OK, WARD_REASON_NONE, 0};
     if (tcph->ack) {
         return pass;
@@ -133,7 +146,6 @@ static __always_inline struct ward_result check_port_scan(struct tcphdr *tcph, _
 
     __u64 bit = 1ULL << (bpf_ntohs(tcph->dest) % 64);
     struct port_scan_stats *entry = bpf_map_lookup_elem(&port_scan_map, &ip_src);
-    __u64 curr_time = bpf_ktime_get_ns();
 
 	if (!entry) {
         struct port_scan_stats init_entry = {curr_time, bit, 1, false};
@@ -213,10 +225,6 @@ int ward_main(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    if (iph->protocol != IPPROTO_TCP) {
-        return XDP_PASS;
-    }
-
     __u32 config_key = 0;
     struct ward_cfg *config = bpf_map_lookup_elem(&ward_config, &config_key);
     if (!config) {
@@ -224,6 +232,19 @@ int ward_main(struct xdp_md *ctx) {
     }
 
     enum xdp_action action = config->enforce ? XDP_DROP : XDP_PASS;
+
+    __u64 curr_time = bpf_ktime_get_ns();
+    struct block_stats *b = bpf_map_lookup_elem(&ward_blocklist, &ip_src);
+    if (b) {
+        if (curr_time < b->until_time) {
+            return action;
+        }
+        bpf_map_delete_elem(&ward_blocklist, &ip_src);
+    }
+
+    if (iph->protocol != IPPROTO_TCP) {
+        return XDP_PASS;
+    }
     
     int iph_len = iph->ihl * 4;
     if (iph_len < 20 || iph_len > 60) {
@@ -235,10 +256,30 @@ int ward_main(struct xdp_md *ctx) {
         return XDP_PASS;
     }
 
-    struct ward_result syn_res = check_syn_flood(tcph, ip_src, config);
-    struct ward_result port_scan_res = check_port_scan(tcph, ip_src, config);
-    if (syn_res.verdict == WARD_BLOCK)  emit_event(ip_src, &syn_res, action);
-    if (port_scan_res.verdict == WARD_BLOCK) emit_event(ip_src, &port_scan_res, action);
+    struct ward_result syn_res = check_syn_flood(tcph, ip_src, config, curr_time);
+    struct ward_result port_scan_res = check_port_scan(tcph, ip_src, config, curr_time);
+    enum ward_reason reason = WARD_REASON_NONE;
+    __u64 until = 0;
+
+    if (syn_res.verdict == WARD_BLOCK) {
+        emit_event(ip_src, &syn_res, action);
+        until = curr_time + config->syn_block_ttl_ns;
+        reason = syn_res.reason;
+    }
+
+    if (port_scan_res.verdict == WARD_BLOCK) {
+        emit_event(ip_src, &port_scan_res, action);
+        __u64 scan_until = curr_time + config->port_scan_block_ttl_ns;
+        if (scan_until > until) {
+            until = scan_until;
+            reason = port_scan_res.reason;
+        }
+    }
+
+    if (until) {
+        struct block_stats block_entry = {until, reason};
+		bpf_map_update_elem(&ward_blocklist, &ip_src, &block_entry, BPF_ANY);
+    }
 
     if (syn_res.verdict != WARD_OK || port_scan_res.verdict != WARD_OK) {
         return action;
