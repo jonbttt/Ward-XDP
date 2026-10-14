@@ -17,11 +17,18 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm libbpf-dev hping3 nmap \
-            linux-tools-common linux-tools-$(uname -r)
+          sudo apt-get install -y clang llvm libbpf-dev hping3 nmap
+
+      - name: Install bpftool
+        run: |
+          BPFTOOL_VER=v7.7.0
+          curl -sfL https://github.com/libbpf/bpftool/releases/download/${BPFTOOL_VER}/bpftool-${BPFTOOL_VER}-amd64.tar.gz \
+            | sudo tar -xz -C /usr/local/bin
+          sudo chmod +x /usr/local/bin/bpftool
+          /usr/local/bin/bpftool version
 
       - name: Generate vmlinux.h
-        run: sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+        run: sudo /usr/local/bin/bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 
       - name: Build
         run: go generate ./... && go build -o ward-xdp .
