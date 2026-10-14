@@ -4,7 +4,8 @@
 
 char __license[] SEC("license") = "Dual BSD/GPL";
 
-#define ETH_P_IP 0x0800 // macro def for IPv4 Packet
+#define ETH_P_IP 0x0800     // macro def for IPv4 Packet
+#define ETH_P_ARP 0x0806    // macro def for ARP Packet
 #define MAX_MAP_ENTRIES 131072
 
 enum ward_verdict {
@@ -202,19 +203,7 @@ static __always_inline void emit_event(__u32 ip_src, struct ward_result *res, en
     }
 }
 
-SEC("xdp")
-int ward_main(struct xdp_md *ctx) {
-    void *data_end = (void *)(long)ctx->data_end;
-    void *data = (void *)(long)ctx->data;
-    struct ethhdr *eth = data;
-    if ((void *)(eth + 1) > data_end) {
-        return XDP_PASS;
-    }
-
-    if (bpf_ntohs(eth->h_proto) != ETH_P_IP) {
-        return XDP_PASS;
-    }
-
+static __always_inline enum xdp_action handle_ipv4(void *data, void *data_end) {
     struct iphdr *iph = data + sizeof(struct ethhdr);
     if ((void *)(iph + 1) > data_end) {
         return XDP_PASS;
@@ -286,4 +275,29 @@ int ward_main(struct xdp_md *ctx) {
     }
     
     return XDP_PASS;
+}
+
+static __always_inline enum xdp_action handle_arp(void *data, void *data_end) {
+    return XDP_PASS;
+}
+
+SEC("xdp")
+int ward_main(struct xdp_md *ctx) {
+    void *data_end = (void *)(long)ctx->data_end;
+    void *data = (void *)(long)ctx->data;
+    struct ethhdr *eth = data;
+    if ((void *)(eth + 1) > data_end) {
+        return XDP_PASS;
+    }
+
+    switch(bpf_ntohs(eth->h_proto)) {
+    case ETH_P_IP:
+        return handle_ipv4(data, data_end);
+    case ETH_P_ARP:
+        return handle_arp(data, data_end);
+    default:
+        return XDP_PASS;
+    }
+
+    
 }
