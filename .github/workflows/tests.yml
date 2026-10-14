@@ -1,0 +1,39 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  xdp:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang llvm libbpf-dev hping3 nmap \
+            linux-tools-common linux-tools-$(uname -r)
+
+      - name: Generate vmlinux.h
+        run: sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+
+      - name: Build
+        run: go generate ./... && go build -o ward-xdp .
+
+      - name: Set up veth rig
+        run: sudo bash tests/veth-testenv.sh
+
+      - name: SYN flood
+        run: bash tests/synflood/test.sh
+      - name: Port scan
+        run: bash tests/portscan/test.sh
+      - name: Allowlist
+        run: bash tests/allowlist/test.sh
+      - name: Blocklist
+        run: bash tests/blocklist/test.sh
