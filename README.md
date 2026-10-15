@@ -13,7 +13,7 @@ Status: [x] done · [~] in progress · [-] planned
 
 1. **SYN flood mitigation** [x] per-source rate limit on SYN-only segments via an LRU map; drop above threshold in a rolling window, one alert per window over the ring buffer.
 2. **Port scan detection** [x] flag sources touching many distinct ports; 64-bit bitmap per source for approximate distinct-port counting. Catches SYN, NULL, FIN, and XMAS scans.
-3. **ARP spoofing prevention** [-] trusted IPv4→MAC table; drop replies where the sender IP maps to a different MAC. Uses bpf_dynptr for variable-length parsing.
+3. **ARP spoofing prevention** [x] trusted IPv4 → MAC table; drop replies where the sender IP maps to a different MAC. Independent from allowlist and blocklist since spoofed IP is the victim's.
 4. **IP spoofing / ingress filtering** [-] LPM-trie martian/bogon deny + uRPF-style allow (RFC 2827 / BCP 38).
 5. **DNS amplification mitigation** [-] per-destination rate limit on unsolicited port-53 responses to protected hosts.
 6. **ML anomaly detection** [-] Go control plane: rule engine → userspace per-source z-score baseline → inline Isolation Forest; hourly retrain.
