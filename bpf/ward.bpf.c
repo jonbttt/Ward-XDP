@@ -18,6 +18,8 @@ enum ward_reason {
     WARD_REASON_NONE = 0,
     WARD_REASON_SYN_FLOOD = 1,
     WARD_REASON_PORT_SCAN = 2,
+    WARD_REASON_ARP_SPOOF = 3,
+    WARD_REASON_ARP_UNTRUSTED = 4,
 };
 
 struct ward_result {
@@ -43,6 +45,7 @@ struct ward_cfg {
     __u64 port_scan_max_ports;
     __u64 port_scan_window_ns;
     __u64 port_scan_block_ttl_ns;
+    __u64 arp_strict;
 };
 
 struct block_stats {
@@ -62,6 +65,14 @@ struct port_scan_stats {
     __u64 distinct;     // num bits set
     bool alerted;
 };
+
+struct arp_eth_ipv4 {
+    struct arphdr hdr;
+    __u8 smac[6];   // sender MAC
+    __u8 saddr[4];  // sender IP
+    __u8 tmac[6];   // target MAC
+    __u8 taddr[4];  // target IP
+} __attribute__((packed));
 
 struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
@@ -97,6 +108,13 @@ struct {
     __type(key, __u32);
     __type(value, struct port_scan_stats);
 } port_scan_map SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, __u32);
+    __type(value, __u64);
+} arp_trust SEC(".maps");
 
 struct {
 	__uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -174,6 +192,26 @@ static __always_inline struct ward_result check_port_scan(struct tcphdr *tcph, _
     if (entry->distinct > cfg->port_scan_max_ports) {
         struct ward_result res = {WARD_BLOCK, WARD_REASON_PORT_SCAN, entry->distinct};
         entry->alerted = true;
+        return res;
+    }
+
+    return pass;
+}
+
+static __always_inline struct ward_result check_arp_spoof(__u32 ip_src, __u64 mac, struct ward_cfg *cfg) {
+    struct ward_result pass = {WARD_OK, WARD_REASON_NONE, 0};
+    
+    __u64 *trusted = bpf_map_lookup_elem(&arp_trust, &ip_src);
+    if (!trusted) {
+        if (cfg->arp_strict) {
+            struct ward_result res = {WARD_BLOCK, WARD_REASON_ARP_UNTRUSTED, mac};
+            return res;
+        }
+        return pass;
+    }
+
+    if (*trusted != mac) {
+        struct ward_result res = {WARD_BLOCK, WARD_REASON_ARP_SPOOF, mac};
         return res;
     }
 
@@ -278,6 +316,39 @@ static __always_inline enum xdp_action handle_ipv4(void *data, void *data_end) {
 }
 
 static __always_inline enum xdp_action handle_arp(void *data, void *data_end) {
+    struct arp_eth_ipv4 *arph = data + sizeof(struct ethhdr);
+    if ((void *)(arph + 1) > data_end) {
+        return XDP_PASS;
+    }
+
+    if (bpf_ntohs(arph->hdr.ar_hrd) != 1 ||                 // only ethernet
+        bpf_ntohs(arph->hdr.ar_pro) != ETH_P_IP ||          // only IPv4
+        arph->hdr.ar_hln != 6 || arph->hdr.ar_pln != 4 ||   // hardware/protocol addr len
+        bpf_ntohs(arph->hdr.ar_op) != 2) {                  // only reply opcode
+        return XDP_PASS;
+    }
+
+    __u32 config_key = 0;
+    struct ward_cfg *config = bpf_map_lookup_elem(&ward_config, &config_key);
+    if (!config) {
+        return XDP_PASS;
+    }
+
+    enum xdp_action action = config->enforce ? XDP_DROP : XDP_PASS;
+
+    __u32 ip_src;
+    __builtin_memcpy(&ip_src, arph->saddr, 4);
+
+    __u64 mac = 0;
+    __builtin_memcpy(&mac, arph->smac, 6);
+
+    struct ward_result arp_res = check_arp_spoof(ip_src, mac, config);
+
+    if (arp_res.verdict == WARD_BLOCK) {
+        emit_event(ip_src, &arp_res, action);
+        return action;
+    }
+    
     return XDP_PASS;
 }
 

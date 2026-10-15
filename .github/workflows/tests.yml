@@ -44,3 +44,5 @@ jobs:
         run: bash tests/allowlist/test.sh
       - name: Blocklist
         run: bash tests/blocklist/test.sh
+      - name: ARP spoofing
+        run: bash tests/arpspoof/test.sh
