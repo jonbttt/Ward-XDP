@@ -43,6 +43,8 @@ func main() {
 	scanWindowNs := flag.Int("scan_window_ns", 5000000000, "timeframe for ports accessed to trigger port scan alert (nanoseconds)")
 	scanBlockTTL := flag.Int("scan_block_ttl_ns", 600000000000, "how long to block a port scan source (nanoseconds)")
 	allowList := flag.String("allow", "", "comma-delimited IPs that are never blocked")
+	arpStrict := flag.Bool("arp_strict", false, "drop ARP replies from IPs not in trust table")
+	arpTrust := flag.String("arp_trust", "", "comma-delimited IP=MAC pairs, ex: 10.0.0.1=aa:bb:cc:dd:ee:ff")
 	flag.Parse()
 
 	if *ifaceName == "" {
@@ -55,7 +57,7 @@ func main() {
 	}
 
 	if *scanMaxPorts <= 0 || *scanMaxPorts >= 64 {
-		log.Fatalf("[-] scan_max_ports must be <= 64")
+		log.Fatalf("[-] scan_max_ports must be < 64")
 	}
 
 	objs := wardObjects{}
@@ -72,9 +74,13 @@ func main() {
 		PortScanMaxPorts:   uint64(*scanMaxPorts),
 		PortScanWindowNs:   uint64(*scanWindowNs),
 		PortScanBlockTtlNs: uint64(*scanBlockTTL),
+		ArpStrict:          0,
 	}
 	if *enforce {
 		cfg.Enforce = 1
+	}
+	if *arpStrict {
+		cfg.ArpStrict = 1
 	}
 	if err := objs.WardConfig.Put(uint32(0), cfg); err != nil {
 		log.Fatalf("[-] unable to set config: %v", err)
@@ -90,6 +96,31 @@ func main() {
 				log.Fatalf("[-] unable to add %s to allowlist: %v", ip, err)
 			}
 			log.Printf("[+] added %s to allowlist", ip)
+		}
+	}
+
+	if *arpTrust != "" {
+		for _, pair := range strings.Split(*arpTrust, ",") {
+			parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+			if len(parts) != 2 {
+				log.Fatalf("[-] invalid -arp_trust entry (expected ip=mac): %q", pair)
+			}
+			ip := net.ParseIP(parts[0]).To4()
+			if ip == nil {
+				log.Fatalf("[-] invalid IPv4 in -arp_trust: %q", parts[0])
+			}
+			mac, err := net.ParseMAC(parts[1])
+			if err != nil {
+				log.Fatalf("[-] invalid MAC in -arp_trust: %q", parts[1])
+			} else if len(mac) != 6 {
+				log.Fatalf("[-] invalid MAC length in -arp_trust (ethernet only): %q", parts[1])
+			}
+			var val [8]byte
+			copy(val[:], mac)
+			if err := objs.ArpTrust.Put([4]byte(ip), val); err != nil {
+				log.Fatalf("[-] unable to add %s to ARP trust table: %v", ip, err)
+			}
+			log.Printf("[+] trusting %s at %s", ip, mac)
 		}
 	}
 
@@ -136,7 +167,13 @@ func main() {
 				continue
 			}
 
-			log.Printf("[!] src=%s reason=%d value=%d action=%d", net.IP(event.IPSrc[:]), event.Reason, event.Value, event.Action)
+			if event.Reason == 3 || event.Reason == 4 {
+				var b [8]byte
+				binary.LittleEndian.PutUint64(b[:], event.Value)
+				log.Printf("[!] src=%s reason=%d mac=%s action=%d", net.IP(event.IPSrc[:]), event.Reason, net.HardwareAddr(b[:6]), event.Action)
+			} else {
+				log.Printf("[!] src=%s reason=%d value=%d action=%d", net.IP(event.IPSrc[:]), event.Reason, event.Value, event.Action)
+			}
 		}
 	}()
 
